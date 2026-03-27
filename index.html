@@ -137,6 +137,69 @@
         border: 1px solid #cbd5e1;
         padding: 8px 10px;
         border-radius: 8px;
+        z-index: 5;
+      }
+
+      .brush {
+        cursor: crosshair;
+      }
+
+      .selection {
+        stroke: #0ea5e9;
+        stroke-width: 2;
+        fill: rgba(14, 165, 233, 0.15);
+      }
+
+      .link-selected {
+        stroke: #0ea5e9 !important;
+      }
+
+      .summary-panel {
+        position: absolute;
+        bottom: 22px;
+        left: 22px;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-size: 12px;
+        color: #1e293b;
+        max-width: 280px;
+        box-shadow: 0 8px 24px rgba(2, 6, 23, 0.08);
+        display: none;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 10;
+      }
+
+      .summary-panel.active {
+        display: block;
+      }
+
+      .summary-panel h3 {
+        font-size: 12px;
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
+        color: #334155;
+      }
+
+      .summary-item {
+        padding: 6px 0;
+        border-bottom: 1px solid #e2e8f0;
+        font-size: 11px;
+      }
+
+      .summary-item:last-child {
+        border-bottom: none;
+      }
+
+      .summary-total {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 2px solid #0ea5e9;
+        font-weight: 600;
+        color: #0f172a;
       }
 
       @media (max-width: 860px) {
@@ -184,6 +247,8 @@
         <div class="hint">
           Passe o mouse nos blocos e fluxos para ver detalhes
         </div>
+
+        <div class="summary-panel" id="summaryPanel"></div>
       </div>
     </div>
 
@@ -224,6 +289,8 @@
 
       const svg = d3.select("#flowChart");
       const tooltip = d3.select("#tooltip");
+      const summaryPanel = d3.select("#summaryPanel");
+      const selectedLinks = new Set();
 
       function showTooltip(event, html) {
         tooltip
@@ -235,6 +302,37 @@
 
       function hideTooltip() {
         tooltip.style("display", "none");
+      }
+
+      function updateSummaryPanel() {
+        if (selectedLinks.size === 0) {
+          summaryPanel.classed("active", false);
+          return;
+        }
+
+        summaryPanel.classed("active", true);
+
+        let totalRecursos = 0;
+        const fluxosHtml = Array.from(selectedLinks)
+          .map((linkData) => {
+            totalRecursos += linkData.value;
+            return `<div class="summary-item"><strong>${linkData.source.name}</strong> → <strong>${linkData.target.name}</strong><br>Recursos: <span style="color: #0ea5e9; font-weight: 600;">${linkData.value}</span></div>`;
+          })
+          .join("");
+
+        const html = `
+          <h3>Resumo de Fluxos Selecionados (${selectedLinks.size})</h3>
+          ${fluxosHtml}
+          <div class="summary-total">Total de Recursos: ${totalRecursos}</div>
+        `;
+
+        summaryPanel.html(html);
+      }
+
+      function clearSelection() {
+        svg.selectAll(".link-selected").classed("link-selected", false);
+        selectedLinks.clear();
+        updateSummaryPanel();
       }
 
       function buildGraphData() {
@@ -332,6 +430,63 @@
           .attr("font-size", 12)
           .attr("fill", "#0f172a")
           .text((d) => d.name);
+
+        // Brush para selecionar múltiplos fluxos
+        const brush = d3.brush()
+          .extent([
+            [30, 24],
+            [width - 30, height - 24],
+          ])
+          .on("brush", (event) => {
+            const selection = event.selection;
+            if (!selection) {
+              link.classed("link-selected", false);
+              selectedLinks.clear();
+              updateSummaryPanel();
+              return;
+            }
+
+            const [x0, y0] = selection[0];
+            const [x1, y1] = selection[1];
+
+            // Limpa a seleção anterior antes de calcular a nova
+            selectedLinks.clear();
+
+            link.classed("link-selected", (d) => {
+              // Calcula pontos ao longo do caminho do link para detecção de intersecção
+              const sourceX = d.source.x1;
+              const sourceY = (d.source.y0 + d.source.y1) / 2;
+              const targetX = d.target.x0;
+              const targetY = (d.target.y0 + d.target.y1) / 2;
+
+              // Verifica MUITOS pontos ao longo do link (40 pontos em vez de 5)
+              for (let t = 0; t <= 1; t += 0.025) {
+                const x = sourceX + (targetX - sourceX) * t;
+                const y = sourceY + (targetY - sourceY) * t;
+                if (x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+                  selectedLinks.add(d);
+                  return true;
+                }
+              }
+              return false;
+            });
+
+            updateSummaryPanel();
+          })
+          .on("end", (event) => {
+            // Limpa a seleção visual do brush, mas mantém os fluxos selecionados
+            svg.select(".brush").call(brush.move, null);
+          });
+
+        svg.append("g").attr("class", "brush").call(brush);
+
+        // Clique para limpar seleção
+        svg.on("click", (event) => {
+          if (event.target.tagName === "svg") {
+            link.classed("link-selected", false);
+            updateSummaryPanel();
+          }
+        });
       }
 
       render();
